@@ -1,0 +1,120 @@
+style(type="text/css").
+	.eighty{
+		width:80%;
+		display:inline-block;
+		position:absolute;
+		overflow:scroll;
+	}
+	.twenty{
+		width:20%;
+		display:inline-block;
+		position:fixed;
+		top:0px;
+		right:0px;
+		height:100%;
+		border-left:solid 1px black;
+	}
+	.seventy-five{
+		width:65%
+	}
+	.twenty-five{
+		width:30%;
+	}
+	.two-third{
+		height:60%;
+		padding:1% 0;
+		display:block;
+	}
+	.one-third{
+		height:30%;
+		padding:1% 0;
+		display:block;
+	}
+	.inline-div{
+		display:inline-block;
+		padding:1%;
+	}
+	.pfn{
+		display:inline-block;
+		padding-right:10px;
+	}
+	.fourth-level{
+		padding-left:40px;
+	}
+	.fourth-level:hover{
+		color:#0F74BD;
+		cursor:pointer;
+		text-decoration:underline;
+	}
+
+if local === true
+	include includes/scripts/local_top.pug
+if jenkins === true
+	include includes/scripts/jenkins_top.pug
+
+h1 Test: #{json.testDate}
+div(class='eighty')
+	each file in json.tests
+		h2 #{file.file_name} </h2>
+		each cases in file.cases
+				div(id='pass-fail-new')
+					h4(class='pfn') #{cases.case_name} </h4>
+					p(class='pfn') Passed: #{cases.passed}     
+					p(class='pfn') Failed: #{cases.failed}    
+					p(class='pfn') New: #{cases.new}	
+				if cases.failed > 0
+					each test in cases.tests
+						if test.status == "failed"
+						div(id='test-description')
+							h3 #{cases.case_name} </h3>
+							div(id=test.test_name + "_div") Shot Name: #{test.test_name}
+							div Status: #{test.status}
+						div
+							div(class='inline-div seventy-five')
+								include includes/slider/slider.pug
+
+							div(class="inline-div twenty-five", style="height:598px; position:absolute;")
+								div(class="two-third")
+									img(src=test.diff_shot, width="100%", class="popover-class", id=test.test_name + '_img_diff')
+									include includes/popover/popover_diff.pug
+								div(class="one-third")
+									button(class="notAButton", id=test.test_name + '_button_ref') View Ref Image
+									button(class="notAButton", id=test.test_name + '_button_test') View Test Image
+									button(class="notAButton" onclick="resetRef('" + test.test_name + "','" + test.ref_shot + "')") Reset Ref Image
+									include includes/popover/popover_ref.pug
+									include includes/popover/popover_test.pug
+
+
+						script(type="text/javascript").
+							slider.createSlider("#{test.test_name}" + "_slider")
+							popover.createImagePopover("#{test.test_name}", 'diff')
+							popover.createButtonPopover("#{test.test_name}", 'ref')
+							popover.createButtonPopover("#{test.test_name}", 'test')
+						</script>
+
+div(class='twenty')
+	h1(style='padding-left:10px;') Tests <h1>
+	each file in json.tests
+		h3(style='padding-left:20px;') #{file.file_name} </h3>
+		each cases in file.cases
+			h4(style='padding-left:30px;') #{cases.case_name} </h4>
+				each test in cases.tests
+					if test.status == "failed"
+						p(class='fourth-level', id=test.test_name + "_link") #{test.test_name}
+						script(type="text/javascript").
+							$("#" + "#{test.test_name}" + "_link").click(function() {
+							    $('html, body').animate({
+							        scrollTop: $("#" + "#{test.test_name}" + "_div").offset().top
+							    }, 1500);
+							});
+						</script>
+
+
+
+if local === true
+	include includes/scripts/local_bottom.pug
+if jenkins === true
+	include includes/scripts/jenkins_bottom.pug
+
+
+	
