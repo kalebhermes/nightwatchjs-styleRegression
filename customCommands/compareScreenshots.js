@@ -1,3 +1,4 @@
+/* eslint-disable */
 var util = require('util');
 var events = require('events');
 var fs = require('fs');
@@ -8,215 +9,256 @@ var resemble = require('node-resemble-js');
  * and has a "disabled" state.  It clicks and then checkes the element state until either it evaluates to true.
  */
 
-function CompareScreeshots() {
-  events.EventEmitter.call(this);
+function CompareScreenshots(){
+	events.EventEmitter.call(this);
 }
 
-util.inherits(CompareScreeshots, events.EventEmitter);
+util.inherits(CompareScreenshots, events.EventEmitter);
 
-CompareScreeshots.prototype.command = function (name, callback) {
-  var self = this;
-  var name = this.cleanName(name);
+CompareScreenshots.prototype.command = function(element, name, callback){
+	var self = this;
+	//Handle the callback and name if there is no element
+	//element must be an xpath
+	if(element.indexOf('//') === -1){
+		if(name){
+			callback = name;
+		}
+		name = element;
+		element = false;
+	}
 
-  self.initGlobal();
-  self.initGlobalModule(); 
-  if(self.trackCurrentShot(name) === true){
-    self.api.perform(function(){
-      var message = "Compare Screenshots: A screenshot has already been taken for " + name + " this session. This shot will be skipped.";
-      self.client.assertion(true, true, true, message, true);
-      self.emit('complete');
-    });
-  } else {
+	name = this.cleanName(name);
+	self.initGlobal();
+	self.initGlobalModule(); 
+	//Check if the current 'name' has a screenshot already this session. If so, skip it. 
+	if(self.trackCurrentShot(name) === true){
+		self.api.perform(function(){
+			var message = 'Compare Screenshots: A screenshot has already been taken for ' + name + ' this session. This shot will be skipped.';
+			self.client.assertion(true, true, true, message, true);
+			self.emit('complete');
+		});
+	} else {
+		var testFilePath = this.buildTestFilePath(name);
+		var refFilePath = this.buildRefFilePath(name);
 
-    var testFilePath = this.buildTestFilePath(name);
-    var refFilePath = this.buildRefFilePath(name);
+		//Attempt to read the Reference Image from the File System
+		try {
+			var image = fs.readFileSync(refFilePath);
+		} catch (err){
+		//If the Reference Image isn't there, take one.
+			if (err.code === 'ENOENT'){
+				if(element){
+					self.api.screenshotElement(element, name, refFilePath, function(screenshot){
+						self.markTestNew(name, refFilePath);
+						self.writeJSON();
+						if(callback){
+							callback(screenshot);
+						}
+						self.client.assertion(true, screenshot, screenshot, 'Compare Screenshots: New reference screenshot taken.', true);
+						self.emit('complete');
+					});
+				} else {
+					self.api.screenshotPage(name, refFilePath, function(screenshot){
+						self.markTestNew(name, refFilePath);
+						self.writeJSON();
+						if(callback){
+							callback(screenshot);
+						}
+						self.client.assertion(true, screenshot, screenshot, 'Compare Screenshots: New reference screenshot taken.', true);
+						self.emit('complete');
+					});
+				}
+			} else {
+				//Callback if the error was for some reason other than 'Unable to find Reference Image file.'
+				if(callback){
+					callback('There was an error: ' + err);
+				}
+				throw err;
+			}
+		}
 
-    try {
-      var image = fs.readFileSync(refFilePath);
-    } catch (err) {
-      console.log(err);
-      if (err.code === 'ENOENT') {
-        this.api.saveScreenshot(refFilePath, function(screenshot){
-          self.markTestNew(name, refFilePath);
-          if(callback){
-            callback(screenshot);
-          };
-          self.writeJSON();
-          self.client.assertion(true, screenshot, screenshot, "Compare Screenshots: New reference screenshot taken.", true);
-          self.emit('complete');
-        });
-      } else {
-        if(callback){
-          callback('There was an error: ' + err);
-        }
-        throw err;
-      }
-    }
+		//If we found the image, take a new screenshot, so we can compair them.
+		if(image){
+			if(element){
+				this.api.screenshotElement(element, name, testFilePath, function(screenshot){
+					self.compareShots(name, image, testFilePath, refFilePath, function(result){
+						self.writeJSON();
+						if(result.passed){
+							self.client.assertion(true, result.message, result.message, 'Compare Screenshots:' + result.message, true);
+						} else if (!result.passed){
+							self.client.assertion(true, result.passMessage, result.failureMessage, 'Compare Screenshots: ' + result.failureMessage, true);
+						} else{
+							console.log('I don\'t know what happened.');
+						}
+						self.emit('complete');
+					});
+				});
+			} else {
+				this.api.screenshotPage(name, testFilePath, function(screenshot){
+					self.compareShots(name, image, testFilePath, refFilePath, function(result){
+						self.writeJSON();
+						if(result.passed){
+							self.client.assertion(true, result.message, result.message, 'Compare Screenshots:' + result.message, true);
+						} else if (!result.passed){
+							self.client.assertion(true, result.passMessage, result.failureMessage, 'Compare Screenshots: ' + result.failureMessage, true);
+						} else{
+							console.log('I don\'t know what happened.');
+						}
+						self.emit('complete');
+					});
+				});
+			}
+		}
 
-    if(image){
-      this.api.saveScreenshot(testFilePath, function(screenshot){
-        self.compareShots(name, screenshot, image, testFilePath, refFilePath, function (result) {
-          self.writeJSON();
-          if(result.passed){
-            self.client.assertion(true, result.message, result.message, "Compare Screenshots:" + result.message, true);
-          } else if (!result.passed){
-            self.client.assertion(true, result.passMessage, result.failureMessage, "Compare Screenshots: " + result.failureMessage, true);
-          } else{
-            console.log('I don\'t know what happened.')
-          }
-          self.emit('complete');
-        });
-      });
-    }
-
-    return this;
-  }
+		return this;
+	}
 };
 
-CompareScreeshots.prototype.compareShots = function (name, screenshot, image, testFilePath, refFilePath, callback) {
-  var self = this;
+CompareScreenshots.prototype.compareShots = function(name, image, testFilePath, refFilePath, callback){
+	var self = this;
 
-  var screenshot = new Buffer(screenshot.value, 'base64');
+	try{
+		var screenshot = fs.readFileSync(testFilePath);
+	} catch(error){
+		console.log(error);
+	}
 
-  resemble(image)
-    .compareTo(screenshot)
-    .onComplete(function(data){
-      if (Number(data.misMatchPercentage) <= 0.01) {
-        self.markTestPassed(name, testFilePath, refFilePath);
-        if(callback){
-          var result = {
-            passed: true,
-            message: name + ' compairson passed!'
-          };
-          callback(result);
-        }
-      } else {
-        var diffFilePath = testFilePath + '_diff.png';
-        data.getDiffImage().pack().pipe(fs.createWriteStream(diffFilePath));
-        self.markTestFailed(name, testFilePath, refFilePath, diffFilePath);
-        if(callback){
-          var result = {
-            passed: false,
-            failureMessage: name + " screenshots differ " + data.misMatchPercentage + "%",
-            passMessage: name + " compairson passed!"
-          };
-          callback(result);
-        }
-      }
-      return this;
-  });
+
+	resemble(image)
+		.compareTo(screenshot)
+		.onComplete(function(data){
+			if (Number(data.misMatchPercentage) <= 0.01){
+				self.markTestPassed(name, testFilePath, refFilePath);
+				if(callback){
+					var result = {
+						passed: true,
+						message: name + ' compairson passed!'
+					};
+					callback(result);
+				}
+			} else {
+				var diffFilePath = testFilePath + '_diff.png';
+				data.getDiffImage().pack().pipe(fs.createWriteStream(diffFilePath));
+				self.markTestFailed(name, testFilePath, refFilePath, diffFilePath);
+				if(callback){
+					var result = {
+						passed: false,
+						failureMessage: name + ' screenshots differ ' + data.misMatchPercentage + '%',
+						passMessage: name + ' compairson passed!'
+					};
+					callback(result);
+				}
+			}
+			return this;
+		});
 };
 
-CompareScreeshots.prototype.buildTestFilePath = function(name) {
-  var self = this;
-  var subTestName = this.stripTestName();
-  var fileName = global.currentStatus.testDate + '/' + self.api.currentTest.module + '/' + subTestName + '/' + name + '.png';
+CompareScreenshots.prototype.buildTestFilePath = function(name){
+	var self = this;
+	var subTestName = this.stripTestName();
+	var fileName = global.currentStatus.testDate + '/' + self.api.currentTest.module + '/' + subTestName + '/' + name + '.png';
 
-  return __base + 'style_regression/test/' + fileName;
+	return __base + 'style_regression/test/' + fileName;
 };
 
-CompareScreeshots.prototype.buildRefFilePath = function(name) {
-  var self = this;
-  var subTestName = this.stripTestName();
-  var fileName = self.api.currentTest.module + '/' + subTestName + '/' + name + '.png';
+CompareScreenshots.prototype.buildRefFilePath = function(name){
+	var self = this;
+	var subTestName = this.stripTestName();
+	var fileName = self.api.currentTest.module + '/' + subTestName + '/' + name + '.png';
 
-  return __base + 'style_regression/refs/' + fileName;
+	return __base + 'style_regression/refs/' + fileName;
 };
 
-CompareScreeshots.prototype.stripTestName = function(){
-  return this.api.currentTest.name.substr((this.api.currentTest.name.indexOf(': ') + 2), 5);
+CompareScreenshots.prototype.stripTestName = function(){
+	return this.api.currentTest.name.substr((this.api.currentTest.name.indexOf(': ') + 2), 5);
 };
 
-CompareScreeshots.prototype.cleanName = function(name){
-  return name.replace(/[^a-z0-9_\-]/gi, '_').toLowerCase();
+CompareScreenshots.prototype.cleanName = function(name){
+	return name.replace(/[^a-z0-9_\-]/gi, '_').toLowerCase();
 };
 
-CompareScreeshots.prototype.markTestPassed = function(name, testFilePath, refFilePath){
-  var self = this;
-  var module = self.api.currentTest.module;
-  var testName = self.stripTestName(self.api.currentTest.name);
+CompareScreenshots.prototype.markTestPassed = function(name, testFilePath, refFilePath){
+	var self = this;
+	var module = self.api.currentTest.module;
+	var testName = self.stripTestName(self.api.currentTest.name);
 
-  var temp = {
-    ref_path: refFilePath,
-    test_path: testFilePath,
-    status: 'passed'
-  };
+	var temp = {
+		ref_path: refFilePath,
+		test_path: testFilePath,
+		status: 'passed'
+	};
 
-  global.currentStatus[module][testName][name] = temp;
+	global.currentStatus[module][testName][name] = temp;
 };
 
-CompareScreeshots.prototype.markTestFailed = function(name, testFilePath, refFilePath, diffFilePath){
-  var self = this;
-  var module = self.api.currentTest.module;
-  var testName = self.stripTestName(self.api.currentTest.name);
+CompareScreenshots.prototype.markTestFailed = function(name, testFilePath, refFilePath, diffFilePath){
+	var self = this;
+	var module = self.api.currentTest.module;
+	var testName = self.stripTestName(self.api.currentTest.name);
 
-  var temp = {
-    ref_path: refFilePath,
-    test_path: testFilePath,
-    diff_path: diffFilePath,
-    status: 'failed'
-  };
+	var temp = {
+		ref_path: refFilePath,
+		test_path: testFilePath,
+		diff_path: diffFilePath,
+		status: 'failed'
+	};
 
-  global.currentStatus[module][testName][name] = temp;
+	global.currentStatus[module][testName][name] = temp;
 };
 
-CompareScreeshots.prototype.markTestNew = function(name, refFilePath){
-  var self = this;
-  var module = self.api.currentTest.module;
-  var testName = self.stripTestName(self.api.currentTest.name);
+CompareScreenshots.prototype.markTestNew = function(name, refFilePath){
+	var self = this;
+	var module = self.api.currentTest.module;
+	var testName = self.stripTestName(self.api.currentTest.name);
 
-  var temp = {
-    ref_path: refFilePath,
-    status: 'new'
-  };
+	var temp = {
+		ref_path: refFilePath,
+		status: 'new'
+	};
 
-  global.currentStatus[module][testName][name] = temp;
+	global.currentStatus[module][testName][name] = temp;
 };
 
-CompareScreeshots.prototype.initGlobal = function(){
-  var date = new Date();
-  newDate = date.getMonth()+1 + '.' + date.getDate() + '.' + date.getFullYear() + '_' + date.getHours() + '.' + date.getMinutes();
+CompareScreenshots.prototype.initGlobal = function(){
+	var date = new Date();
+	var newDate = date.getMonth()+1 + '.' + date.getDate() + '.' + date.getFullYear() + '_' + date.getHours() + '.' + date.getMinutes();
 
-  if(!global.currentStatus){
-    global.currentStatus = {};
-    global.currentStatus.testDate = newDate;
-    global.shotList = {};
-  };
+	if(!global.currentStatus){
+		global.currentStatus = {};
+		global.currentStatus.testDate = newDate;
+		global.shotList = {};
+	}
 };
 
-CompareScreeshots.prototype.initGlobalModule = function(){
-  var self = this;
-  var module = self.api.currentTest.module;
-  var testName = self.stripTestName(self.api.currentTest.name);
+CompareScreenshots.prototype.initGlobalModule = function(){
+	var self = this;
+	var module = self.api.currentTest.module;
+	var testName = self.stripTestName(self.api.currentTest.name);
 
-  if(!global.currentStatus[module]){
-    global.currentStatus[module] = {};
-  };
-  if(global.currentStatus[module] && !global.currentStatus[module][testName]){
-      global.currentStatus[module][testName] = {};
-  };
+	if(!global.currentStatus[module]){
+		global.currentStatus[module] = {};
+	}
+	if(global.currentStatus[module] && !global.currentStatus[module][testName]){
+		global.currentStatus[module][testName] = {};
+	}
 };
 
-CompareScreeshots.prototype.trackCurrentShot = function(name){
-  var self = this;
-
-  if(global.shotList[name]){
-    return true;
-  } else {
-    global.shotList[name] = true;
-    return false;
-  };
+CompareScreenshots.prototype.trackCurrentShot = function(name){
+	if(global.shotList[name]){
+		return true;
+	} else {
+		global.shotList[name] = true;
+		return false;
+	}
 };
 
-CompareScreeshots.prototype.writeJSON = function(){
-  var self = this;
-
-  var json = JSON.stringify(global.currentStatus);
-  try{
-    fs.writeFileSync(__base + 'style_regression/test/data.json', json);
-  } catch(err) {
-    console.log(err);
-  };
+CompareScreenshots.prototype.writeJSON = function(){
+	var json = JSON.stringify(global.currentStatus);
+	try{
+		fs.writeFileSync(__base + 'style_regression/test/data.json', json);
+	} catch(err){
+		console.log(err);
+	}
 };
 
-module.exports = CompareScreeshots;
+module.exports = CompareScreenshots;
